@@ -1,0 +1,234 @@
+package project2Storm;
+
+import org.apache.hadoop.hbase.client.Durability;
+import org.apache.storm.Config;
+import org.apache.storm.LocalCluster;
+import org.apache.storm.StormSubmitter;
+import org.apache.storm.generated.StormTopology;
+import org.apache.storm.hbase.bolt.mapper.HBaseProjectionCriteria;
+import org.apache.storm.hbase.bolt.mapper.HBaseValueMapper;
+import org.apache.storm.hbase.trident.mapper.SimpleTridentHBaseMapMapper;
+import org.apache.storm.hbase.trident.mapper.SimpleTridentHBaseMapper;
+import org.apache.storm.hbase.trident.mapper.TridentHBaseMapper;
+import org.apache.storm.hbase.trident.state.HBaseState;
+import org.apache.storm.hbase.trident.state.HBaseStateFactory;
+import org.apache.storm.hbase.trident.state.HBaseUpdater;
+import org.apache.storm.kafka.BrokerHosts;
+import org.apache.storm.kafka.StringScheme;
+import org.apache.storm.kafka.ZkHosts;
+import org.apache.storm.kafka.trident.OpaqueTridentKafkaSpout;
+import org.apache.storm.kafka.trident.TridentKafkaConfig;
+import org.apache.storm.spout.SchemeAsMultiScheme;
+import org.apache.storm.topology.base.BaseWindowedBolt;
+import org.apache.storm.trident.TridentTopology;
+import org.apache.storm.trident.operation.BaseAggregator;
+import org.apache.storm.trident.operation.BaseFunction;
+import org.apache.storm.trident.operation.TridentCollector;
+import org.apache.storm.trident.state.StateFactory;
+import org.apache.storm.trident.testing.Split;
+import org.apache.storm.trident.tuple.TridentTuple;
+import org.apache.storm.trident.windowing.config.SlidingDurationWindow;
+import org.apache.storm.trident.windowing.config.WindowConfig;
+import org.apache.storm.tuple.Fields;
+import org.apache.storm.tuple.Values;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
+import java.util.Date;
+import java.text.SimpleDateFormat;
+
+/**
+ * Created by HongYuChai on 2017/7/17.
+ */
+public class wind {
+
+    //Abnormal Data
+    public static class Split2 extends BaseFunction {
+        @Override
+        public void execute(TridentTuple tuple, TridentCollector collector) {
+            String line  = tuple.getValueByField("str").toString();
+            String result[]=line.split(",");
+            Double wind=Double.parseDouble(result[4]);
+            Double p=Double.parseDouble(result[22]);
+
+            if(result[4].equals("") || result[4].equals("-902") ||wind<3 ||wind >12
+                    || result[22].equals("") || result[22].equals("-902")|| p<(-0.5*1500) ||p> (1500*2)){
+                System.out.println("Split Result Abnormal: "+result[4]+" "+result[22]);
+                collector.emit(new Values(result[2]+"_"+result[1],line));
+            }
+        }
+    }
+
+    //Normal Data
+    public static class Split3 extends BaseFunction {
+        @Override
+        public void execute(TridentTuple tuple, TridentCollector collector) {
+            String line  = tuple.getValueByField("str").toString();
+            String result[]=line.split(",");
+            Double wind=Double.parseDouble(result[4]);
+            Double p=Double.parseDouble(result[22]);
+
+            if(!(result[4].equals("") || result[4].equals("-902") ||wind<3 ||wind >12
+                    || result[22].equals("") || result[22].equals("-902")|| p<(-0.5*1500) ||p> (1500*2))){
+                System.out.println("Split Result Normal: "+result[4]+" "+result[22]);
+                collector.emit(new Values(result[2]+"_"+result[1],line));
+            }
+        }
+    }
+
+    //Hot Data
+    public static class Split4 extends BaseFunction {
+        @Override
+        public void execute(TridentTuple tuple, TridentCollector collector) {
+            String line  = tuple.getValueByField("str").toString();
+            String result[]=line.split(",");
+            Double temperature=Double.parseDouble(result[13]);
+
+            if(temperature>80){
+                System.out.println("---------------------hot warning: "+result[13]);
+                collector.emit(new Values(result[1],result[13]));
+            }
+        }
+    }
+
+    //process Hot Data
+    public static class TmAggregator extends BaseAggregator<Integer> {
+        Map<String ,Integer> countMap=new HashMap<String ,Integer>();
+
+        @Override
+        public Integer init(Object batchId, TridentCollector collector) {
+            countMap=new HashMap<String ,Integer>();
+            return 0;
+        }
+
+        @Override
+        public void aggregate(Integer val, TridentTuple tuple,
+                              TridentCollector collector) {
+            if(!countMap.containsKey(tuple.getString(0))){
+                countMap.put(tuple.getString(0),1);
+            }else {
+                countMap.put(tuple.getString(0),countMap.get(tuple.getString(0))+1);
+            }
+        }
+
+        @Override
+        public void complete(Integer val, TridentCollector collector) {
+            for (Map.Entry<String, Integer> entry : countMap.entrySet()) {
+                if(entry.getValue()>=5){
+                    SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+                    String time=sdf.format(new Date());
+                    try{
+                        Class.forName("com.mysql.jdbc.Driver") ;
+                    }catch(ClassNotFoundException e){
+                        System.out.println("cannot find driver!");
+                        e.printStackTrace() ;
+                    }
+                    String url = "jdbc:mysql://localhost:3306/wind_analysis" ;
+                    String username = "root" ;
+                    String password = "" ;
+                    try{
+                        Connection con = DriverManager.getConnection(url , username , password ) ;
+                        Statement stmt = con.createStatement() ;
+                        stmt.executeUpdate("INSERT INTO warnni(alert_date,fan_no,des_info) " + " values('" + time + "','" + entry.getKey() + "','" + entry.getValue() + "')");
+                        collector.emit(new Values(entry.getKey(),time,entry.getValue()));
+                        if(stmt != null){   // close declearion
+                            try{
+                                stmt.close() ;
+                            }catch(SQLException e){
+                                e.printStackTrace() ;
+                            }
+                        }
+                        if(con != null){  // close connect object
+                            try{
+                                con.close() ;
+                            }catch(SQLException e){
+                                e.printStackTrace() ;
+                            }
+                        }
+                    }catch(SQLException se){
+                        System.out.println("Database connect failure！");
+                        se.printStackTrace() ;
+                    }
+                }
+            }
+        }
+    }
+
+    public static StormTopology buildTopology(){
+        WindowConfig slidingDurationWindow = SlidingDurationWindow.of(new BaseWindowedBolt.Duration(30, TimeUnit.SECONDS), new BaseWindowedBolt.Duration(5, TimeUnit.SECONDS));
+
+        BrokerHosts zk = new ZkHosts("chy,dank2,dank3");
+        TridentKafkaConfig spoutConf = new TridentKafkaConfig(zk, "topic5");
+        spoutConf.scheme = new SchemeAsMultiScheme(new StringScheme());
+        OpaqueTridentKafkaSpout spout = new OpaqueTridentKafkaSpout(spoutConf);
+
+        TridentHBaseMapper tridentHBaseMapper = new SimpleTridentHBaseMapper()
+                .withColumnFamily("cf")
+                .withColumnFields(new Fields("info"))
+                .withRowKeyField("time_fanno");
+
+        HBaseValueMapper rowToStormValueMapper = new WordCountValueMapper();
+
+        HBaseProjectionCriteria projectionCriteria = new HBaseProjectionCriteria();
+        projectionCriteria.addColumn(new HBaseProjectionCriteria.ColumnMetaData("cf", "info"));
+
+        String hBaseConfigKey="hbase.conf";
+
+        HBaseState.Options options1 = new HBaseState.Options()
+                .withConfigKey(hBaseConfigKey)
+                .withDurability(Durability.SYNC_WAL)
+                .withMapper(tridentHBaseMapper)
+                .withProjectionCriteria(projectionCriteria)
+                .withRowToStormValueMapper(rowToStormValueMapper)
+                .withTableName("Normal");
+
+        HBaseState.Options options2 = new HBaseState.Options()
+                .withConfigKey(hBaseConfigKey)
+                .withDurability(Durability.SYNC_WAL)
+                .withMapper(tridentHBaseMapper)
+                .withProjectionCriteria(projectionCriteria)
+                .withRowToStormValueMapper(rowToStormValueMapper)
+                .withTableName("Abnormal");
+
+        StateFactory factory = new HBaseStateFactory(options1);
+        StateFactory factory2 = new HBaseStateFactory(options2);
+
+        TridentTopology topology = new TridentTopology();
+        //normal Data to Hbase
+        topology.newStream("spout1",spout)
+                .each(new Fields("str"),new Split3(), new Fields("time_fanno","info"))
+                .partitionPersist(factory, new Fields("time_fanno","info"), new HBaseUpdater(), new Fields());
+        //abnormal Data to Hbase
+        topology.newStream("spout2",spout)
+                .each(new Fields("str"),new Split2(), new Fields("time_fanno","info"))
+                .partitionPersist(factory2, new Fields("time_fanno","info"), new HBaseUpdater(), new Fields());
+        //hot Data process
+        topology.newStream("spout3",spout)
+                .each(new Fields("str"),new Split4(),new Fields("fannno1","tempture"))
+                .window(slidingDurationWindow,new Fields("fannno1","tempture"),new TmAggregator(),new Fields("fanno","time","describe"));
+        return topology.build();
+
+    }
+
+    public static void main(String[] args) throws Exception {
+        Config conf = new Config();
+        conf.setMaxSpoutPending(20);
+        conf.put("hbase.conf", new HashMap());
+
+        if (args.length == 0) {
+            LocalCluster cluster = new LocalCluster();
+            cluster.submitTopology("windanalysis", conf, buildTopology());
+
+        } else {
+            conf.setNumWorkers(3);
+            StormSubmitter.submitTopologyWithProgressBar(args[0], conf,
+                    buildTopology());
+        }
+    }
+}
