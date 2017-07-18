@@ -32,19 +32,19 @@ object Main {
     val ssc =new StreamingContext(sc,Seconds(1))
     val conf = HBaseConfiguration.create()
     conf.set("hbase.zookeeper.property.clientPort", "2181")
-    conf.set("hbase.zookeeper.quorum", "172.17.11.194,172.17.11.66,172.17.11.72")
+    conf.set("hbase.zookeeper.quorum", "dank1,dank2,dank3")
 
     // Kafka configurations
     val topics = Set("topic3")
     //本地虚拟机ZK地址
-    val brokers = "172.17.11.194:9092,172.17.11.66:9092,172.17.11.72:9092"
+    val brokers = "dank1:9092,dank2:9092,dank3:9092"
 
     val kafkaParams = Map[String, String](
       "metadata.broker.list" -> brokers, "serializer.class" -> "kafka.serializer.StringEncoder",
       "auto.offset.reset" -> "smallest")
 
     val driver = "com.mysql.jdbc.Driver"
-    val url = "jdbc:mysql://172.17.11.194:3306/wind_analysis"
+    val url = "jdbc:mysql://dank1:3306/wind_analysis"
     val username = "root"
     val password = "root"
     var connection:Connection = null
@@ -77,7 +77,7 @@ object Main {
         partitionOfRecord.foreach(pair=>{
           val tableName="Normal"
           val hbaseConf = HBaseConfiguration.create()
-          hbaseConf.set("hbase.zookeeper.quorum", "172.17.11.194,172.17.11.66,172.17.11.72")
+          hbaseConf.set("hbase.zookeeper.quorum", "dank1,dank2,dank3")
           hbaseConf.set("hbase.zookeeper.property.clientPort", "2181")
           hbaseConf.set("hbase.defaults.for.version.skip", "true")
           //rowkey
@@ -108,7 +108,7 @@ object Main {
         partitionOfRecord.foreach(pair=>{
           val tableName="Abnormal"
           val hbaseConf = HBaseConfiguration.create()
-          hbaseConf.set("hbase.zookeeper.quorum", "172.17.11.194,172.17.11.66,172.17.11.72")
+          hbaseConf.set("hbase.zookeeper.quorum", "dank1,dank2,dank3")
           hbaseConf.set("hbase.zookeeper.property.clientPort", "2181")
           hbaseConf.set("hbase.defaults.for.version.skip", "true")
           //rowkey
