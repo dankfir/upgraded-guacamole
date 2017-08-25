@@ -1,2 +1,1 @@
-# upgraded-guacamole
-Kafka+Storm+Hbase
+# Kafka+Storm+Hbase
